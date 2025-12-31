@@ -108,3 +108,8 @@ dmypy.json
 .cursor/rules/
 .cursor/skills-*/
 .cursor/plans/
+.venv/
+.env
+.env.*
+!.env.example
+*.sqlite3

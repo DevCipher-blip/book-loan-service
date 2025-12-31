@@ -1,164 +1,65 @@
-# 📚 Library Tracking System
+# Book loans, returns, and due dates
 
-Welcome to the **Library Tracking System**! This project is a comprehensive application built with **Python**, **Django**, **Django REST Framework (DRF)**, and **Celery**. It manages authors, books, members, and loans within a library context. The application is fully containerized using **Docker**, allowing for easy setup and deployment.
+A Django REST API for a small lending library. Authors and books form the catalog, members are linked to Django users, and loans record who borrowed a book and when it should return. Celery handles notification delivery separately from API requests.
 
----
+## The borrowing contract
 
-## 📌 **Project Overview**
-This application enables **library tracking** by allowing users to manage authors, books, members, and loans efficiently.
+A new loan starts with a 14-day due date. Borrowing decrements available copies; returning replenishes them once. Each member may have one active loan for a given book. Renewals accept a positive integer number of days and reject returned or already-overdue loans.
 
-### **Tech Stack**
-- **Python 3.9** – Backend development.
-- **Django 4.2** – Web framework.
-- **Django REST Framework** – API development.
-- **Celery 5.3** – Task queue for async jobs.
-- **Redis 6** – Message broker for Celery.
-- **PostgreSQL 13** – Database.
-- **Docker & Docker Compose** – Containerized setup.
-
----
-
-## 🛠 **Setup Instructions**
-
-### 1️⃣ **Clone the Repository**
-```sh
-git clone https://gitlab.com/search-atlas-interviews/django-library-tracking-system
-cd django-library-tracking-system
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant DB as PostgreSQL
+    participant Queue as Celery
+    Client->>API: POST book loan + member_id
+    API->>DB: Lock book, validate, create loan, reduce stock
+    DB-->>API: Commit transaction
+    API->>Queue: Queue notification after commit
+    API-->>Client: 201 + loan_id
 ```
 
-### 2️⃣ **Configure Your Git Remote**
-To work with your own repository, you need to replace the default remote with one you control. We recommend using **GitHub** for this, it's free.
+Loan and return operations share a book-row lock in PostgreSQL. Read-only loan endpoints prevent direct CRUD from bypassing stock changes. SQLite tests exercise behavior, not PostgreSQL's concurrent locking guarantees. A durable notification outbox is not implemented: the queue must be available when post-commit notifications are published.
 
-#### 🏗 **Create an Empty Public Repository on GitHub**
-1. Go to [GitHub](https://github.com/) and sign in.
-2. Click on the **+** in the top-right corner and select **New repository**.
-3. Enter a repository name (e.g., `django-library-tracking-system`).
-4. Choose **Public**.
-5. **Do not** initialize with a README, `.gitignore`, or license.
-6. Click **Create repository**.
-7. Copy the repository URL (it should look like `https://github.com/your-username/your-repo.git`).
+## Start the development stack
 
-#### 🔧 **Replace the Default Git Remote**
-Run the following commands to rename the existing remote and add your newly created repository:
+The Compose file runs PostgreSQL, Redis, Django, and a Celery worker. Copy the example configuration and fill in `POSTGRES_PASSWORD` and a persistent, independently generated `DJANGO_SECRET_KEY`. Keep the resulting `.env` local.
 
 ```sh
-git remote rename origin upstream
-git remote add origin [YOUR_GITHUB_REPOSITORY_URL]
-git push -u origin main
+cp .env.example .env
+# Set the two values in .env before starting the stack.
+docker compose up --build
 ```
 
-### 3️⃣ **Create a `.env` File**
-Create a `.env` file in the root directory to store environment variables:
+Create an account in another terminal:
+
 ```sh
-touch .env
+docker compose exec web python manage.py createsuperuser
 ```
 
-#### 📌 **Content of `.env`**
-```env
-DEBUG=1
-DJANGO_ALLOWED_HOSTS=localhost 127.0.0.1 [::1]
-DATABASE_URL=postgres://library_user:library_password@db:5432/library_db
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/0
-SECRET_KEY=your-secret-key
-DEFAULT_FROM_EMAIL=admin@library.com
-```
-> **Note:** Replace `your-secret-key` with a secure key. Ensure that `.env` is included in `.gitignore`.
+Open `http://localhost:8000/api/` for the browsable API and use `/api-auth/login/` to sign in. All API endpoints require authentication. Development service ports bind to localhost; configure transport security and role-specific access rules before any shared deployment.
 
-### 4️⃣ **Build and Run Docker Containers**
+## Explore the API
+
+| Operation | Endpoint | Body |
+| --- | --- | --- |
+| Catalog | `GET /api/authors/`, `GET /api/books/` | — |
+| Members | `GET /api/members/` | — |
+| Borrow | `POST /api/books/{id}/loan/` | `{"member_id": 1}` |
+| Return | `POST /api/books/{id}/return_book/` | `{"member_id": 1}` |
+| Inspect loans | `GET /api/loans/` | — |
+| Extend due date | `POST /api/loans/{id}/extended_due_date/` | `{"additional_days": 3}` |
+
+Create catalog and member records before borrowing; example IDs are illustrative. Lists use page-number pagination, with a default page size of 10 and a maximum requested size of 100. The [serializers](library/serializers.py) define writable catalog and member fields.
+
+Mail goes to Django's console backend in development. `library.tasks.check_overdue_loans` selects active loans whose due date is before today. A periodic schedule for that task is not configured in this repository; run or schedule it explicitly when needed.
+
+## Regression checks
+
 ```sh
-docker-compose build
-docker-compose up
-```
-This command will:
-- Start PostgreSQL (`db`) and Redis (`redis`) services.
-- Build and run the Django application (`web`).
-- Run the Celery worker (`celery`).
-
-### 5️⃣ **Initialize the Django Project**
-Apply migrations and create a superuser:
-```sh
-docker-compose run web python manage.py makemigrations
-docker-compose run web python manage.py migrate
-docker-compose run web python manage.py createsuperuser
-```
-Follow the prompts to create a superuser account.
-
-### 6️⃣ **Start the Application**
-```sh
-docker-compose up
-```
-To stop the running containers, press `CTRL+C` in the terminal where `docker-compose up` is running, then execute:
-```sh
-docker-compose down
+docker compose exec web python manage.py test library --settings=library_system.test_settings
 ```
 
----
+The test settings use an in-memory SQLite database and local email storage. Tests cover stock changes, duplicate borrowing, repeated returns, renewal validation, authentication, and overdue reminders. Existing commit-message utility tests are separate from the lending behavior.
 
-## 📂 **Project Structure**
-```plaintext
-django-library-tracking-system/
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-├── .env
-├── .gitignore
-├── manage.py
-├── library_system/
-│   ├── __init__.py
-│   ├── asgi.py
-│   ├── celery.py
-│   ├── settings.py
-│   ├── urls.py
-│   └── wsgi.py
-└── library/
-    ├── __init__.py
-    ├── admin.py
-    ├── apps.py
-    ├── models.py
-    ├── serializers.py
-    ├── tasks.py
-    ├── tests.py
-    └── views.py
-```
-
----
-
-## 🤝 **Contributing & Commit Guidelines**
-
-- Please follow the repository’s commit and testing workflow:
-  - Keep commits **small, focused, and logically separated** (feature, bug fix, refactor, tests).
-  - Use the commit message format `Feature::Task::Task Description`.
-  - Add or update tests for each meaningful change and ensure they pass before committing.
-  - When a date range is provided, keep commit timestamps within that range and in a realistic order.
-- See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guidelines.
-
----
-
-## 📌 **Accessing the Application**
-
-### 🔑 **Django Admin Interface**
-- **URL:** [http://localhost:8000/admin/](http://localhost:8000/admin/)
-- **Login:** Use the superuser credentials you created.
-- **Functionality:** Manage authors, books, members, and loans through the admin panel.
-
-### 📌 **API Endpoints**
-| Method | Endpoint          | Description |
-|--------|------------------|-------------|
-| `GET`  | `/api/authors/`  | Fetch all authors |
-| `GET`  | `/api/books/`    | Fetch all books |
-| `GET`  | `/api/members/`  | Fetch all members |
-| `GET`  | `/api/loans/`    | Fetch all loans |
-| `POST` | `/api/authors/`  | Create a new author |
-| `POST` | `/api/books/`    | Create a new book |
-| `POST` | `/api/members/`  | Create a new member |
-| `POST` | `/api/loans/`    | Create a new loan |
-
----
-
-## 🎯 **License**
-This project is licensed under the **MIT License**.
-
----
-
-🚀 **Happy coding!** 🎉
+Core code is in [library/](library/) and configuration in [library_system/](library_system/). The model default supplies due dates without a custom save override. Notification dispatch waits until the lending transaction commits, and nested list serializers use related-object loading to avoid a query for every displayed relation.

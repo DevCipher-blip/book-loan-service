@@ -48,10 +48,5 @@ class Loan(models.Model):
     is_returned = models.BooleanField(default=False)
     due_date = models.DateField(default=_default_due_date)
 
-    def save():
-        if self.pk is None:
-            base_date = self.loan_date or timezone.now().date()
-            self.due_date = self.due_date or (base_date + timedelta(days=14))
- 
     def __str__(self):
         return f"{self.book.title} loaned to {self.member.user.username}"

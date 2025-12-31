@@ -1,15 +1,15 @@
 import os
+import secrets
 from pathlib import Path
 from dotenv import load_dotenv
 from celery.schedules import crontab
 
-load_dotenv()
-
 # Base Directory
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # Security
-SECRET_KEY = __import__("os").environ["DJANGO_SECRET_KEY"]
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY') or os.getenv('SECRET_KEY') or secrets.token_urlsafe(50)
 DEBUG = int(os.getenv('DEBUG', default=1))
 ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(' ')
 
@@ -41,7 +41,7 @@ MIDDLEWARE = [
 ]
 
 # CORS
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [origin for origin in os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',') if origin]
 
 ROOT_URLCONF = 'library_system.urls'
 
@@ -69,7 +69,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.getenv('POSTGRES_DB', 'library_db'),
         'USER': os.getenv('POSTGRES_USER', 'library_user'),
-        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'library_password'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD'),
         'HOST': os.getenv('DB_HOST', 'db'),
         'PORT': os.getenv('DB_PORT', '5432'),
     }
@@ -102,9 +102,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'library_system.pagination.DefaultPagination'.
+    'DEFAULT_PAGINATION_CLASS': 'library.pagination.DefaultPagination',
     'PAGE_SIZE':10,
 }
 
